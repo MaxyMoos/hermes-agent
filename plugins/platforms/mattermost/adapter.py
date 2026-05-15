@@ -71,6 +71,9 @@ def check_mattermost_requirements() -> bool:
 class MattermostAdapter(BasePlatformAdapter):
     """Gateway adapter for Mattermost (self-hosted or cloud)."""
 
+    AUTHZ_ALLOWED_USERS_ENV = "MATTERMOST_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "MATTERMOST_ALLOW_ALL_USERS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.MATTERMOST)
 

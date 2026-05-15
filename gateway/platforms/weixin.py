@@ -1182,6 +1182,9 @@ class WeixinAdapter(BasePlatformAdapter):
     # fallback "send-final-only" path so the cursor (▉) is never left visible.
     SUPPORTS_MESSAGE_EDITING = False
 
+    AUTHZ_ALLOWED_USERS_ENV = "WEIXIN_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "WEIXIN_ALLOW_ALL_USERS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.WEIXIN)
         extra = config.extra or {}

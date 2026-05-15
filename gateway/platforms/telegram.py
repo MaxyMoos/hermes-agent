@@ -350,6 +350,11 @@ class TelegramAdapter(BasePlatformAdapter):
     MEDIA_GROUP_WAIT_SECONDS = 0.8
     _GENERAL_TOPIC_THREAD_ID = "1"
 
+    AUTHZ_ALLOWED_USERS_ENV = "TELEGRAM_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "TELEGRAM_ALLOW_ALL_USERS"
+    AUTHZ_GROUP_ALLOWED_USERS_ENV = "TELEGRAM_GROUP_ALLOWED_USERS"
+    AUTHZ_GROUP_ALLOWED_CHATS_ENV = "TELEGRAM_GROUP_ALLOWED_CHATS"
+
     # Telegram's edit_message applies MarkdownV2 formatting only on the
     # finalize=True path.  Without this flag, stream_consumer._send_or_edit
     # short-circuits when the raw text is unchanged between the last streamed
@@ -506,6 +511,41 @@ class TelegramAdapter(BasePlatformAdapter):
         if (metadata or {}).get("notify"):
             return {}
         return {"disable_notification": True}
+
+    def is_user_authorized(self, source) -> bool:
+        """Telegram authorization gate.
+
+        Adds the backward-compat shim for #15027: prior to PR #17686,
+        TELEGRAM_GROUP_ALLOWED_USERS was (mis)used as a chat-ID allowlist.
+        Values starting with ``-`` are Telegram chat IDs, not user IDs,
+        so if operators still have those in TELEGRAM_GROUP_ALLOWED_USERS
+        we honor them as chat IDs and warn once. The correct var is now
+        TELEGRAM_GROUP_ALLOWED_CHATS.
+        """
+        if (
+            source.chat_type in {"group", "forum"}
+            and source.chat_id
+        ):
+            group_user_allowlist = os.getenv("TELEGRAM_GROUP_ALLOWED_USERS", "").strip()
+            if group_user_allowlist:
+                legacy_chat_ids = {
+                    v.strip()
+                    for v in group_user_allowlist.split(",")
+                    if v.strip().startswith("-")
+                }
+                if legacy_chat_ids:
+                    if not getattr(self, "_warned_telegram_group_users_legacy", False):
+                        logger.warning(
+                            "TELEGRAM_GROUP_ALLOWED_USERS contains chat-ID-shaped values "
+                            "(%s). Treating them as chat IDs for backward compatibility. "
+                            "Move chat IDs to TELEGRAM_GROUP_ALLOWED_CHATS — the _USERS var "
+                            "is now for sender user IDs.",
+                            ",".join(sorted(legacy_chat_ids)),
+                        )
+                        self._warned_telegram_group_users_legacy = True
+                    if source.chat_id in legacy_chat_ids:
+                        return True
+        return super().is_user_authorized(source)
 
     def _is_callback_user_authorized(
         self,

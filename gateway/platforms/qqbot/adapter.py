@@ -161,6 +161,12 @@ class QQAdapter(BasePlatformAdapter):
     _TYPING_INPUT_SECONDS = 60  # input_notify duration reported to QQ
     _TYPING_DEBOUNCE_SECONDS = 50  # refresh before it expires
 
+    AUTHZ_ALLOWED_USERS_ENV = "QQ_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "QQ_ALLOW_ALL_USERS"
+    # QQ_GROUP_ALLOWED_USERS historically gates group-chat IDs rather than
+    # in-group user IDs (the var name predates the chat/user split).
+    AUTHZ_GROUP_ALLOWED_CHATS_ENV = "QQ_GROUP_ALLOWED_USERS"
+
     @property
     def _log_tag(self) -> str:
         """Log prefix including app_id for multi-instance disambiguation."""

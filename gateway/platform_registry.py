@@ -245,6 +245,16 @@ class PlatformRegistry:
 
         try:
             adapter = entry.adapter_factory(config)
+            # Plugin-supplied auth env-var names: inject onto the adapter
+            # instance so the runner's authorization gate (which delegates
+            # to BasePlatformAdapter.is_user_authorized) can apply them
+            # via the standard AUTHZ_*_ENV mechanism without the registry
+            # needing a special-case lookup.
+            if adapter is not None:
+                if entry.allowed_users_env:
+                    adapter.AUTHZ_ALLOWED_USERS_ENV = entry.allowed_users_env
+                if entry.allow_all_env:
+                    adapter.AUTHZ_ALLOW_ALL_USERS_ENV = entry.allow_all_env
             return adapter
         except Exception as e:
             logger.error(

@@ -189,6 +189,10 @@ from gateway.platforms.base import (
     cache_image_from_url,
     cache_audio_from_url,
 )
+from gateway.whatsapp_identity import (
+    expand_whatsapp_aliases,
+    normalize_whatsapp_identifier,
+)
 
 
 def check_whatsapp_requirements() -> bool:
@@ -243,7 +247,10 @@ class WhatsAppAdapter(BasePlatformAdapter):
     # WhatsApp allows ~65K but long messages are unreadable on mobile.
     MAX_MESSAGE_LENGTH = 4096
     DEFAULT_REPLY_PREFIX = "⚕ *Hermes Agent*\n────────────\n"
-    
+
+    AUTHZ_ALLOWED_USERS_ENV = "WHATSAPP_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "WHATSAPP_ALLOW_ALL_USERS"
+
     # Default bridge location relative to the hermes-agent install
     _DEFAULT_BRIDGE_DIR = Path(__file__).resolve().parents[2] / "scripts" / "whatsapp-bridge"
 
@@ -359,6 +366,35 @@ class WhatsAppAdapter(BasePlatformAdapter):
             return chat_id in self._group_allow_from
         # "open" — all groups allowed
         return True
+
+    def _candidate_user_ids(self, source) -> set:
+        """Expand the sender ID across phone↔LID alias forms.
+
+        WhatsApp identifiers come in several shapes (``+E164@s.whatsapp.net``,
+        ``digits@lid``, raw phone, etc.); the bridge stores phone↔LID
+        mappings as JSON sidecar files. Surfacing every observed form
+        here lets a single allowlist entry match the sender regardless
+        of which form the bridge reports.
+        """
+        ids = super()._candidate_user_ids(source)
+        if source.user_id:
+            ids |= expand_whatsapp_aliases(source.user_id)
+            normalized = normalize_whatsapp_identifier(source.user_id)
+            if normalized:
+                ids.add(normalized)
+        return ids
+
+    def _normalize_allowlist_ids(self, ids: set) -> set:
+        """Apply phone↔LID alias expansion to allowlist tokens.
+
+        Mirrors :meth:`_candidate_user_ids` so a phone-number entry in
+        ``WHATSAPP_ALLOWED_USERS`` matches a sender reported under the
+        corresponding LID.
+        """
+        out = set()
+        for uid in ids:
+            out |= expand_whatsapp_aliases(uid)
+        return out or ids
 
     def _compile_mention_patterns(self):
         patterns = self.config.extra.get("mention_patterns")

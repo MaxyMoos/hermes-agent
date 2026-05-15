@@ -58,12 +58,61 @@ def _make_event(platform: Platform, user_id: str, chat_id: str) -> MessageEvent:
     )
 
 
+def _build_auth_test_adapter(platform: Platform, config: GatewayConfig):
+    """Build a real adapter whose ``is_user_authorized`` will be exercised.
+
+    The authorization gate now lives on each adapter (see #24842), so
+    these tests need a real adapter instance — a ``SimpleNamespace``
+    no longer carries the authorization logic.  For platforms whose
+    adapter override consults instance state (Signal), we run the full
+    ``__init__`` so env-derived attrs are populated; for the rest a
+    minimal ``object.__new__`` instance plus ``platform`` is enough,
+    since their default flow reads class-level ``AUTHZ_*_ENV``
+    constants and module-level helpers only.  ``send`` is always
+    replaced with an ``AsyncMock`` so tests can assert on delivery
+    side-effects.
+    """
+    from gateway.platforms.base import BasePlatformAdapter
+
+    if platform == Platform.SIGNAL:
+        from gateway.platforms.signal import SignalAdapter
+        platform_cfg = config.platforms.get(platform) or PlatformConfig(enabled=True)
+        adapter = SignalAdapter(platform_cfg)
+    else:
+        adapter_cls_by_platform = {
+            Platform.TELEGRAM: ("gateway.platforms.telegram", "TelegramAdapter"),
+            Platform.DISCORD: ("gateway.platforms.discord", "DiscordAdapter"),
+            Platform.WHATSAPP: ("gateway.platforms.whatsapp", "WhatsAppAdapter"),
+            Platform.SLACK: ("gateway.platforms.slack", "SlackAdapter"),
+            Platform.EMAIL: ("gateway.platforms.email", "EmailAdapter"),
+            Platform.SMS: ("gateway.platforms.sms", "SmsAdapter"),
+            Platform.MATTERMOST: ("gateway.platforms.mattermost", "MattermostAdapter"),
+            Platform.MATRIX: ("gateway.platforms.matrix", "MatrixAdapter"),
+            Platform.DINGTALK: ("gateway.platforms.dingtalk", "DingTalkAdapter"),
+            Platform.FEISHU: ("gateway.platforms.feishu", "FeishuAdapter"),
+            Platform.WECOM: ("gateway.platforms.wecom", "WeComAdapter"),
+            Platform.WECOM_CALLBACK: ("gateway.platforms.wecom_callback", "WecomCallbackAdapter"),
+            Platform.WEIXIN: ("gateway.platforms.weixin", "WeixinAdapter"),
+            Platform.BLUEBUBBLES: ("gateway.platforms.bluebubbles", "BlueBubblesAdapter"),
+            Platform.QQBOT: ("gateway.platforms.qqbot", "QQAdapter"),
+            Platform.YUANBAO: ("gateway.platforms.yuanbao", "YuanbaoAdapter"),
+        }
+        module_name, class_name = adapter_cls_by_platform[platform]
+        import importlib
+        adapter_cls = getattr(importlib.import_module(module_name), class_name)
+        adapter = object.__new__(adapter_cls)
+        adapter.platform = platform
+
+    adapter.send = AsyncMock()
+    return adapter
+
+
 def _make_runner(platform: Platform, config: GatewayConfig):
     from gateway.run import GatewayRunner
 
     runner = object.__new__(GatewayRunner)
     runner.config = config
-    adapter = SimpleNamespace(send=AsyncMock())
+    adapter = _build_auth_test_adapter(platform, config)
     runner.adapters = {platform: adapter}
     runner.pairing_store = MagicMock()
     runner.pairing_store.is_approved.return_value = False

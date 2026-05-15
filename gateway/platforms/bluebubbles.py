@@ -102,6 +102,9 @@ class BlueBubblesAdapter(BasePlatformAdapter):
     SUPPORTS_MESSAGE_EDITING = False
     MAX_MESSAGE_LENGTH = MAX_TEXT_LENGTH
 
+    AUTHZ_ALLOWED_USERS_ENV = "BLUEBUBBLES_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "BLUEBUBBLES_ALLOW_ALL_USERS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.BLUEBUBBLES)
         extra = config.extra or {}

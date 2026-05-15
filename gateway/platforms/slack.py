@@ -304,6 +304,9 @@ class SlackAdapter(BasePlatformAdapter):
 
     MAX_MESSAGE_LENGTH = 39000  # Slack API allows 40,000 chars; leave margin
 
+    AUTHZ_ALLOWED_USERS_ENV = "SLACK_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "SLACK_ALLOW_ALL_USERS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.SLACK)
         self._app: Optional[Any] = None

@@ -577,6 +577,10 @@ class DiscordAdapter(BasePlatformAdapter):
     # Auto-disconnect from voice channel after this many seconds of inactivity
     VOICE_TIMEOUT = 300
 
+    AUTHZ_ALLOWED_USERS_ENV = "DISCORD_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "DISCORD_ALLOW_ALL_USERS"
+    AUTHZ_ALLOW_BOTS_ENV = "DISCORD_ALLOW_BOTS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.DISCORD)
         self._client: Optional[commands.Bot] = None
@@ -2223,6 +2227,20 @@ class DiscordAdapter(BasePlatformAdapter):
                 os.unlink(wav_path)
             except OSError:
                 pass
+
+    def is_user_authorized(self, source) -> bool:
+        """Discord authorization gate.
+
+        DISCORD_ALLOWED_ROLES is a role-based allowlist enforced by the
+        adapter's ``on_message`` pre-filter before the runner ever sees
+        the event. If the message reached the gateway, the user already
+        passed that check — short-circuit to True so role-only setups
+        (DISCORD_ALLOWED_USERS empty) don't get rejected by the default
+        env-var matcher. See issue #7871.
+        """
+        if os.getenv("DISCORD_ALLOWED_ROLES", "").strip():
+            return True
+        return super().is_user_authorized(source)
 
     def _is_allowed_user(
         self,

@@ -148,6 +148,9 @@ class WeComAdapter(BasePlatformAdapter):
     # When a chunk is near the 4000-char limit, a continuation is almost certain.
     _SPLIT_THRESHOLD = 3900
 
+    AUTHZ_ALLOWED_USERS_ENV = "WECOM_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "WECOM_ALLOW_ALL_USERS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.WECOM)
 

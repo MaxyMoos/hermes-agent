@@ -63,6 +63,10 @@ def check_wecom_callback_requirements() -> bool:
 
 
 class WecomCallbackAdapter(BasePlatformAdapter):
+
+    AUTHZ_ALLOWED_USERS_ENV = "WECOM_CALLBACK_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "WECOM_CALLBACK_ALLOW_ALL_USERS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.WECOM_CALLBACK)
         extra = config.extra or {}

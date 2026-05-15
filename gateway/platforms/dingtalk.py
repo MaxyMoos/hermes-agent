@@ -160,6 +160,9 @@ class DingTalkAdapter(BasePlatformAdapter):
 
     MAX_MESSAGE_LENGTH = MAX_MESSAGE_LENGTH
 
+    AUTHZ_ALLOWED_USERS_ENV = "DINGTALK_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "DINGTALK_ALLOW_ALL_USERS"
+
     @property
     def SUPPORTS_MESSAGE_EDITING(self) -> bool:  # noqa: N802
         """Edits only meaningful when AI Cards are configured.

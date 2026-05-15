@@ -1413,6 +1413,10 @@ class FeishuAdapter(BasePlatformAdapter):
     # is almost certain.
     _SPLIT_THRESHOLD = 4000
 
+    AUTHZ_ALLOWED_USERS_ENV = "FEISHU_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "FEISHU_ALLOW_ALL_USERS"
+    AUTHZ_ALLOW_BOTS_ENV = "FEISHU_ALLOW_BOTS"
+
     # =========================================================================
     # Lifecycle — init / settings / connect / disconnect
     # =========================================================================

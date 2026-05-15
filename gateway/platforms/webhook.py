@@ -100,6 +100,10 @@ def check_webhook_requirements() -> bool:
 class WebhookAdapter(BasePlatformAdapter):
     """Generic webhook receiver that triggers agent runs from HTTP POSTs."""
 
+    # Webhook requests are authenticated via HMAC signature validation in
+    # the adapter itself — no user allowlist applies.
+    AUTHZ_BYPASS = True
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.WEBHOOK)
         self._host: str = config.extra.get("host", DEFAULT_HOST)

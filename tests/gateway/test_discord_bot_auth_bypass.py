@@ -49,13 +49,23 @@ def _make_bare_runner():
 
     Uses ``object.__new__`` to skip the heavy __init__ — many gateway tests
     use this pattern (see AGENTS.md pitfall #17).
+
+    The runner's authorization gate delegates to the platform adapter's
+    ``is_user_authorized`` (#24842), so we attach a real DiscordAdapter
+    instance — ``__new__`` skips its heavy init; the default
+    ``BasePlatformAdapter`` flow only needs the class-level AUTHZ_*_ENV
+    constants and Discord's role-bypass override.
     """
     from gateway.run import GatewayRunner
+    from gateway.platforms.discord import DiscordAdapter
     runner = object.__new__(GatewayRunner)
     # _is_user_authorized reads self.pairing_store.is_approved(...) before
     # any allowlist check succeeds; stub it to never approve so we exercise
     # the real allowlist path.
     runner.pairing_store = SimpleNamespace(is_approved=lambda *_a, **_kw: False)
+    discord_adapter = object.__new__(DiscordAdapter)
+    discord_adapter.platform = Platform.DISCORD
+    runner.adapters = {Platform.DISCORD: discord_adapter}
     return runner
 
 

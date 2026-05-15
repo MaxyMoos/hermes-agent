@@ -189,6 +189,11 @@ class SignalAdapter(BasePlatformAdapter):
     # square behind in chat clients when edit attempts fail.
     SUPPORTS_MESSAGE_EDITING = False
 
+    AUTHZ_ALLOWED_USERS_ENV = "SIGNAL_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "SIGNAL_ALLOW_ALL_USERS"
+    AUTHZ_GROUP_ALLOWED_USERS_ENV = "SIGNAL_ALLOWED_GROUP_USERS"
+    AUTHZ_GROUP_ALLOWED_CHATS_ENV = "SIGNAL_ALLOWED_GROUPS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.SIGNAL)
 
@@ -380,16 +385,98 @@ class SignalAdapter(BasePlatformAdapter):
             result.add(counterpart)
         return result
 
+    # ------------------------------------------------------------------
+    # Authorization (BasePlatformAdapter override)
+    # ------------------------------------------------------------------
+
+    def is_user_authorized(self, source) -> bool:
+        """Signal-specific authorization gate.
+
+        Two layers (#15027, #9337):
+
+        * **Groups** — outer fence: ``SIGNAL_ALLOWED_GROUPS`` (with the
+          deprecated ``SIGNAL_GROUP_ALLOWED_USERS`` honored as a legacy
+          alias when the new var is empty); inner fence:
+          :meth:`_is_group_user_allowed`, which consults
+          ``SIGNAL_ALLOWED_GROUP_USERS`` and per-group ``config.yaml``
+          overrides.  Both fences run against this adapter's parsed
+          state (``self.group_chat_allow_from`` etc.), which is the
+          single source of truth for Signal authorization.
+        * **DMs** — fall through to the base env-allowlist flow so
+          ``SIGNAL_ALLOWED_USERS`` (+ wildcard, allow-all, alias
+          expansion via :meth:`_candidate_user_ids`) applies.
+        """
+        if source.chat_type in {"group", "forum"}:
+            group_id = getattr(source, "chat_id_alt", None)
+            if not group_id:
+                return False
+            allowed_groups = self._effective_group_chat_allow_from()
+            if not allowed_groups:
+                return False
+            if "*" not in allowed_groups and group_id not in allowed_groups:
+                return False
+            if not source.user_id:
+                return False
+            return self._is_group_user_allowed(group_id, source.user_id)
+        return super().is_user_authorized(source)
+
+    def _effective_group_chat_allow_from(self) -> set:
+        """Group-chat allowlist with legacy-alias fallback.
+
+        ``SIGNAL_GROUP_ALLOWED_USERS`` used to mean "group IDs" before
+        the chat/user split.  When the new ``SIGNAL_ALLOWED_GROUPS`` is
+        unset but the legacy var carries values, treat them as group IDs
+        for backward compatibility.  Mirrors the constructor's parsing
+        of these vars into ``self.group_chat_allow_from``; we re-derive
+        here so authorization always reflects the current environment
+        even in test fixtures that mutate env after init.
+        """
+        env_value = os.getenv("SIGNAL_ALLOWED_GROUPS", "").strip()
+        if not env_value:
+            env_value = os.getenv("SIGNAL_GROUP_ALLOWED_USERS", "").strip()
+        if not env_value:
+            return self.group_chat_allow_from
+        return set(_parse_comma_list(env_value))
+
+    def _candidate_user_ids(self, source) -> set:
+        """Expand the sender ID across phone↔UUID alias forms.
+
+        signal-cli reports a sender as either an E.164 phone number or
+        a service ID (UUID / PNI); the same person may appear under
+        either form across events.  SessionSource carries both forms
+        (``user_id`` + ``user_id_alt``); surfacing both here means a
+        single allowlist entry matches the sender regardless of how
+        signal-cli decided to report them.
+        """
+        ids = super()._candidate_user_ids(source)
+        if source.user_id:
+            ids |= self.expand_user_aliases(source.user_id)
+        if getattr(source, "user_id_alt", None):
+            ids.add(source.user_id_alt)
+            ids |= self.expand_user_aliases(source.user_id_alt)
+        return ids
+
+    def has_allowlist_configured(self) -> bool:
+        """Include the deprecated ``SIGNAL_GROUP_ALLOWED_USERS`` alias.
+
+        The legacy var still gates whether unauthorized DMs get pairing
+        codes — keep it in the allowlist-aware default so deployments
+        on the old name don't regress to pair-spam behavior during
+        migration.
+        """
+        if super().has_allowlist_configured():
+            return True
+        return bool(os.getenv("SIGNAL_GROUP_ALLOWED_USERS", "").strip())
+
     def _is_group_user_allowed(self, group_id: str, user_id: str) -> bool:
         """Check whether user_id is allowed to interact in group_id.
 
-        This is the inner fence of the two-layer group auth model.
-        The outer fence - whole-group authorization via
-        ``SIGNAL_ALLOWED_GROUPS`` - lives in
-        ``run.py._is_user_authorized`` and is mirrored at the top of
-        ``_handle_envelope``.  By the time this method runs, the group
-        itself is already authorized; we're just narrowing to specific
-        senders within it.
+        Inner fence of the two-layer group auth model.  The outer fence
+        (whole-group authorization via ``SIGNAL_ALLOWED_GROUPS``) is
+        enforced by :meth:`is_user_authorized` and mirrored at the top
+        of ``_handle_envelope``.  By the time this method runs, the
+        group itself is already authorized; we're just narrowing to
+        specific senders within it.
 
         Resolution order:
         1. Per-group allowlist from config.yaml (if present, wins).

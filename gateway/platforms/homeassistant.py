@@ -62,6 +62,10 @@ class HomeAssistantAdapter(BasePlatformAdapter):
     # Reconnection backoff schedule (seconds)
     _BACKOFF_STEPS = [5, 10, 30, 60]
 
+    # HA events are system-generated state changes authenticated at the
+    # transport level via HASS_TOKEN; no user allowlist applies.
+    AUTHZ_BYPASS = True
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.HOMEASSISTANT)
 

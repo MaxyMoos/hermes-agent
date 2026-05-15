@@ -4507,6 +4507,9 @@ class YuanbaoAdapter(BasePlatformAdapter):
     MEDIA_MAX_SIZE_MB: int = 50  # Max media file size in MB for upload validation
     REPLY_REF_MAX_ENTRIES: ClassVar[int] = 500  # Max capacity of reference dedup dict
 
+    AUTHZ_ALLOWED_USERS_ENV = "YUANBAO_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "YUANBAO_ALLOW_ALL_USERS"
+
     # -- Active instance registry (class-level singleton) -------------------
 
     _active_instance: ClassVar[Optional["YuanbaoAdapter"]] = None

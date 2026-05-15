@@ -245,6 +245,9 @@ def _extract_attachments(
 class EmailAdapter(BasePlatformAdapter):
     """Email gateway adapter using IMAP (receive) and SMTP (send)."""
 
+    AUTHZ_ALLOWED_USERS_ENV = "EMAIL_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "EMAIL_ALLOW_ALL_USERS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.EMAIL)
 

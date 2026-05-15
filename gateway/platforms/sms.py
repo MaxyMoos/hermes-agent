@@ -63,6 +63,9 @@ class SmsAdapter(BasePlatformAdapter):
 
     MAX_MESSAGE_LENGTH = MAX_SMS_LENGTH
 
+    AUTHZ_ALLOWED_USERS_ENV = "SMS_ALLOWED_USERS"
+    AUTHZ_ALLOW_ALL_USERS_ENV = "SMS_ALLOW_ALL_USERS"
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.SMS)
         self._account_sid: str = os.environ["TWILIO_ACCOUNT_SID"]

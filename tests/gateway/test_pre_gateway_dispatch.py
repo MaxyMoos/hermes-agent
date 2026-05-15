@@ -49,7 +49,21 @@ def _make_runner(platform: Platform):
     )
     runner = object.__new__(GatewayRunner)
     runner.config = config
-    adapter = SimpleNamespace(send=AsyncMock())
+    # The runner's auth gate delegates to ``adapter.is_user_authorized``
+    # (#24842), so use a real adapter instance (with ``send`` swapped for
+    # an AsyncMock for delivery assertions).  ``object.__new__`` skips
+    # heavy init; default authorization reads class-level AUTHZ_*_ENV
+    # plus the WhatsApp alias hooks (which don't need instance state).
+    import importlib
+    adapter_cls_by_platform = {
+        Platform.WHATSAPP: ("gateway.platforms.whatsapp", "WhatsAppAdapter"),
+        Platform.TELEGRAM: ("gateway.platforms.telegram", "TelegramAdapter"),
+    }
+    module_name, class_name = adapter_cls_by_platform[platform]
+    adapter_cls = getattr(importlib.import_module(module_name), class_name)
+    adapter = object.__new__(adapter_cls)
+    adapter.platform = platform
+    adapter.send = AsyncMock()
     runner.adapters = {platform: adapter}
     runner.pairing_store = MagicMock()
     runner.pairing_store.is_approved.return_value = False

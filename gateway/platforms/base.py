@@ -475,7 +475,7 @@ def is_host_excluded_by_no_proxy(hostname: str, no_proxy_value: str | None = Non
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Callable, Awaitable, Tuple, Union
+from typing import ClassVar, Dict, List, Optional, Any, Callable, Awaitable, Tuple, Union
 from enum import Enum
 
 from pathlib import Path as _Path
@@ -1511,7 +1511,22 @@ class BasePlatformAdapter(ABC):
     - Sending messages/responses
     - Handling media
     """
-    
+
+    # ── Authorization configuration ──────────────────────────────────────
+    # Adapters declare which env vars gate access to them via these
+    # class-level constants. The default :meth:`is_user_authorized` flow
+    # reads them; adapters with quirks override the method directly.
+    #
+    # AUTHZ_BYPASS=True marks platforms whose events are authenticated
+    # at the transport level (HASS_TOKEN, webhook HMAC) — the runner
+    # short-circuits to True without consulting any allowlist.
+    AUTHZ_ALLOWED_USERS_ENV: ClassVar[Optional[str]] = None
+    AUTHZ_ALLOW_ALL_USERS_ENV: ClassVar[Optional[str]] = None
+    AUTHZ_GROUP_ALLOWED_USERS_ENV: ClassVar[Optional[str]] = None
+    AUTHZ_GROUP_ALLOWED_CHATS_ENV: ClassVar[Optional[str]] = None
+    AUTHZ_ALLOW_BOTS_ENV: ClassVar[Optional[str]] = None
+    AUTHZ_BYPASS: ClassVar[bool] = False
+
     def __init__(self, config: PlatformConfig, platform: Platform):
         self.config = config
         self.platform = platform
@@ -1778,13 +1793,148 @@ class BasePlatformAdapter(ABC):
     def set_session_store(self, session_store: Any) -> None:
         """
         Set the session store for checking active sessions.
-        
+
         Used by adapters that need to check if a thread/conversation
         has an active session before processing messages (e.g., Slack
         thread replies without explicit mentions).
         """
         self._session_store = session_store
-    
+
+    # ──────────────────────────────────────────────────────────────────
+    # Authorization
+    # ──────────────────────────────────────────────────────────────────
+    # The adapter owns the per-platform authorization decision. The
+    # runner handles only cross-platform plumbing (transport-authenticated
+    # platform bypass, missing user_id rejection, pairing-store approval)
+    # and then delegates here.
+    #
+    # Default flow lives in :meth:`_env_allowlist_authorize`: it consults
+    # the AUTHZ_* class vars, the group-chat allowlist, and intersects
+    # candidate identifiers with allowlist tokens.  Adapters with
+    # platform-specific semantics (group two-fence, role-based bypass,
+    # legacy-var shims) override :meth:`is_user_authorized` and either
+    # decide directly or delegate to ``super()`` after handling their
+    # quirk.
+
+    def is_user_authorized(self, source: "SessionSource") -> bool:
+        """Decide whether ``source`` is authorized to interact with this adapter.
+
+        Called by the runner after it has handled cross-platform concerns
+        (HASS/webhook bypass, missing user_id, pairing approval). The
+        default implementation runs the standard env-var allowlist flow.
+        """
+        return self._env_allowlist_authorize(source)
+
+    def _candidate_user_ids(self, source: "SessionSource") -> set:
+        """Identifiers to test against the allowlist for ``source``.
+
+        Default returns ``{source.user_id}`` plus, when the user_id
+        contains ``@``, the prefix before the ``@``.  Override to add
+        platform-specific aliases (Signal phone↔UUID, WhatsApp
+        phone↔LID).
+        """
+        if not source.user_id:
+            return set()
+        ids = {source.user_id}
+        if "@" in source.user_id:
+            ids.add(source.user_id.split("@")[0])
+        return ids
+
+    def _normalize_allowlist_ids(self, ids: set) -> set:
+        """Expand/normalize allowlist tokens before matching.
+
+        Default returns ``ids`` unchanged. Override when a single
+        token in the allowlist may match multiple equivalent
+        identifiers (e.g. WhatsApp where a phone-number entry should
+        also match the LID counterpart).
+        """
+        return ids
+
+    def has_allowlist_configured(self) -> bool:
+        """Whether any authorization allowlist is configured for this adapter.
+
+        Drives the allowlist-aware default in
+        ``GatewayRunner._get_unauthorized_dm_behavior``: when any
+        allowlist is set, unauthorized DMs are silently dropped
+        instead of triggering the pairing flow.  Override when the
+        adapter recognizes additional legacy/alias env vars.
+        """
+        for env_name in (
+            self.AUTHZ_ALLOWED_USERS_ENV,
+            self.AUTHZ_GROUP_ALLOWED_USERS_ENV,
+            self.AUTHZ_GROUP_ALLOWED_CHATS_ENV,
+        ):
+            if env_name and os.getenv(env_name, "").strip():
+                return True
+        return False
+
+    def _env_allowlist_authorize(self, source: "SessionSource") -> bool:
+        """Default env-var-based authorization flow.
+
+        Reads AUTHZ_*_ENV class vars + ``GATEWAY_ALLOWED_USERS`` /
+        ``GATEWAY_ALLOW_ALL_USERS`` and applies the standard match:
+
+        1. Per-platform allow-all flag.
+        2. Bot pre-pass via ``AUTHZ_ALLOW_BOTS_ENV`` (Discord/Feishu).
+        3. If no allowlist is configured anywhere → ``GATEWAY_ALLOW_ALL_USERS``.
+        4. Group-chat allowlist match (chat_id or chat_id_alt).
+        5. Wildcard ``"*"`` in any user-ID allowlist.
+        6. Intersection of :meth:`_candidate_user_ids` with the union of
+           platform / group-user / global allowlists, after passing both
+           sides through :meth:`_normalize_allowlist_ids`.
+        """
+        if self.AUTHZ_ALLOW_ALL_USERS_ENV:
+            if os.getenv(self.AUTHZ_ALLOW_ALL_USERS_ENV, "").lower() in {"true", "1", "yes"}:
+                return True
+
+        if getattr(source, "is_bot", False) and self.AUTHZ_ALLOW_BOTS_ENV:
+            if os.getenv(self.AUTHZ_ALLOW_BOTS_ENV, "none").lower().strip() in {"mentions", "all"}:
+                return True
+
+        platform_allowlist = os.getenv(self.AUTHZ_ALLOWED_USERS_ENV or "", "").strip()
+        group_user_allowlist = ""
+        group_chat_allowlist = ""
+        if source.chat_type in {"group", "forum"}:
+            group_user_allowlist = os.getenv(self.AUTHZ_GROUP_ALLOWED_USERS_ENV or "", "").strip()
+            group_chat_allowlist = os.getenv(self.AUTHZ_GROUP_ALLOWED_CHATS_ENV or "", "").strip()
+        global_allowlist = os.getenv("GATEWAY_ALLOWED_USERS", "").strip()
+
+        if not platform_allowlist and not group_user_allowlist and not group_chat_allowlist and not global_allowlist:
+            return os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in {"true", "1", "yes"}
+
+        if group_chat_allowlist and source.chat_type in {"group", "forum"}:
+            allowed_groups = {
+                cid.strip() for cid in group_chat_allowlist.split(",") if cid.strip()
+            }
+            candidate_chat_ids = {
+                cid for cid in (source.chat_id, getattr(source, "chat_id_alt", None)) if cid
+            }
+            if candidate_chat_ids and (
+                "*" in allowed_groups or (candidate_chat_ids & allowed_groups)
+            ):
+                return True
+
+        allowed_ids: set = set()
+        if platform_allowlist:
+            allowed_ids.update(
+                uid.strip() for uid in platform_allowlist.split(",") if uid.strip()
+            )
+        if group_user_allowlist:
+            allowed_ids.update(
+                uid.strip() for uid in group_user_allowlist.split(",") if uid.strip()
+            )
+        if global_allowlist:
+            allowed_ids.update(
+                uid.strip() for uid in global_allowlist.split(",") if uid.strip()
+            )
+
+        if "*" in allowed_ids:
+            return True
+
+        allowed_ids = self._normalize_allowlist_ids(allowed_ids)
+        check_ids = self._candidate_user_ids(source)
+        return bool(check_ids & allowed_ids)
+
     @abstractmethod
     async def connect(self) -> bool:
         """
