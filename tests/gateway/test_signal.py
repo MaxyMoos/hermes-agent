@@ -795,15 +795,49 @@ class TestSignalPhoneRedaction:
 # ---------------------------------------------------------------------------
 
 class TestSignalAuthorization:
-    def test_signal_in_allowlist_maps(self):
-        """Signal should be in the platform auth maps."""
+    @pytest.fixture
+    def runner(self, monkeypatch):
+        """GatewayRunner wired with a real SignalAdapter so auth can delegate.
+
+        The authorization gate now lives on the adapter (#24842), so
+        ``object.__new__`` alone cannot exercise platform-specific env
+        vars.  We instantiate SignalAdapter so env-derived attributes
+        (group_chat_allow_from, etc.) are populated and
+        ``adapter.is_user_authorized`` is callable.  ``send`` is
+        swapped for an ``AsyncMock`` so delivery side-effects are
+        harmless.
+        """
+        from unittest.mock import AsyncMock
+
         from gateway.run import GatewayRunner
-        from gateway.config import GatewayConfig
+        from gateway.config import GatewayConfig, PlatformConfig
+        from gateway.platforms.signal import SignalAdapter
 
         gw = GatewayRunner.__new__(GatewayRunner)
-        gw.config = GatewayConfig()
+        gw.config = GatewayConfig(
+            platforms={Platform.SIGNAL: PlatformConfig(enabled=True)}
+        )
         gw.pairing_store = MagicMock()
         gw.pairing_store.is_approved.return_value = False
+        adapter = SignalAdapter(PlatformConfig(enabled=True))
+        adapter.send = AsyncMock()
+        gw.adapters = {Platform.SIGNAL: adapter}
+        return gw
+
+    @staticmethod
+    def _signal_source(*, chat_type, chat_id, user_id, chat_id_alt=None):
+        from gateway.session import SessionSource
+        return SessionSource(
+            platform=Platform.SIGNAL,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            user_id=user_id,
+            user_name=user_id,
+            chat_id_alt=chat_id_alt,
+        )
+
+    def test_signal_in_allowlist_maps(self, runner):
+        """Signal should be in the platform auth maps."""
 
         source = MagicMock()
         source.platform = Platform.SIGNAL
@@ -811,9 +845,66 @@ class TestSignalAuthorization:
 
         # No allowlists set — should check GATEWAY_ALLOW_ALL_USERS
         with patch.dict("os.environ", {}, clear=True):
-            result = gw._is_user_authorized(source)
+            result = runner._is_user_authorized(source)
             assert result is False
 
+    def test_group_allowlist_authorizes_non_dm_sender(self, runner, monkeypatch):
+        monkeypatch.setenv("SIGNAL_ALLOWED_GROUPS", "abc123==,def456==")
+        monkeypatch.delenv("SIGNAL_ALLOWED_USERS", raising=False)
+        monkeypatch.delenv("GATEWAY_ALLOW_ALL_USERS", raising=False)
+        monkeypatch.delenv("SIGNAL_ALLOW_ALL_USERS", raising=False)
+
+        # Signal adapter sets chat_id="group:<id>" and chat_alt_id=<id>.
+        source = self._signal_source(
+            chat_type="group",
+            chat_id="group:abc123==",
+            chat_id_alt="abc123==",
+            user_id="+15559999999",
+        )
+        assert runner._is_user_authorized(source) is True
+
+    def test_group_allowlist_matches_raw_id_via_chat_id_alt(self, runner, monkeypatch):
+        """Regression guard: authorization must compare against the raw group
+        id (chat_id_alt), not the ``group:``-prefixed chat_id used by signal
+        send paths. Entries in SIGNAL_ALLOWED_GROUPS are always unprefixed.
+        """
+        monkeypatch.setenv("SIGNAL_ALLOWED_GROUPS", "abc123==")
+        monkeypatch.delenv("SIGNAL_ALLOWED_USERS", raising=False)
+
+        source = self._signal_source(
+            chat_type="group",
+            chat_id="group:abc123==",
+            chat_id_alt="abc123==",
+            user_id="+15559999999",
+        )
+        assert runner._is_user_authorized(source) is True
+
+    def test_group_wildcard_authorizes_any_group(self, runner, monkeypatch):
+        monkeypatch.setenv("SIGNAL_ALLOWED_GROUPS", "*")
+        monkeypatch.delenv("SIGNAL_ALLOWED_USERS", raising=False)
+
+        source = self._signal_source(
+            chat_type="group",
+            chat_id="group:whatever==",
+            chat_id_alt="whatever==",
+            user_id="+15559999999",
+        )
+        assert runner._is_user_authorized(source) is True
+
+    def test_group_allowlist_does_not_leak_to_dm(self, runner, monkeypatch):
+        """SIGNAL_GROUP_ALLOWED_USERS must only affect group traffic.
+        A DM sender without an entry in SIGNAL_ALLOWED_USERS must still
+        be denied.
+        """
+        monkeypatch.setenv("SIGNAL_GROUP_ALLOWED_USERS", "*")
+        monkeypatch.setenv("SIGNAL_ALLOWED_USERS", "+15551111111")
+
+        dm_source = self._signal_source(
+            chat_type="dm",
+            chat_id="+15559999999",
+            user_id="+15559999999",
+        )
+        assert runner._is_user_authorized(dm_source) is False
 
 # ---------------------------------------------------------------------------
 # Send Message Tool

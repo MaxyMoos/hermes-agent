@@ -335,32 +335,41 @@ class SignalAdapter(BasePlatformAdapter):
         ``SIGNAL_ALLOWED_GROUP_USERS`` for their respective groups.
         """
         extra = getattr(config, "extra", None) or {}
+
         groups_cfg = extra.get("groups") if isinstance(extra, dict) else None
         if not isinstance(groups_cfg, dict):
             return
 
+        logger.info(
+            "Signal _parse_group_config: found %d group(s) in config.yaml extra",
+            len(groups_cfg),
+        )
         chats_wildcard = "*" in self.group_chat_allow_from
 
         for group_id, group_cfg in groups_cfg.items():
             if not isinstance(group_cfg, dict):
                 continue
-            allow_str = group_cfg.get("allow_users", "")
+            allow_str = group_cfg.get("allow_users", "*")  # default to allowing all group users
+            if isinstance(allow_str, list):
+                if len(allow_str) == 0:
+                    self._per_group_allow_users[group_id] = set()  # allow no authorized users at all
+                    continue
+                allow_str = ','.join(allow_str)
+            # Coerce: YAML parses unquoted +336… phone numbers as integers.
+            if isinstance(allow_str, (int, float)):
+                allow_str = str(allow_str)
             if isinstance(allow_str, str) and allow_str.strip():
                 per_group = set(_parse_comma_list(allow_str))
                 self._per_group_allow_users[group_id] = per_group
-                logger.debug(
-                    "Signal: per-group allowlist for %s: %s",
-                    group_id[:8] if group_id else "?",
-                    "all" if "*" in per_group else f"{len(per_group)} user(s)",
+
+            # Sanity check: surface per-group config entries whose group
+            # is not in SIGNAL_ALLOWED_GROUPS — they will never be reachable.
+            if not chats_wildcard and group_id not in self.group_chat_allow_from:
+                logger.warning(
+                    "Signal: per-group config for %r but group is not in "
+                    "SIGNAL_ALLOWED_GROUPS — this entry will never apply.",
+                    group_id or "?",
                 )
-                # sanity check: surface per-group allowlists missing in
-                # ``SIGNAL_ALLOWED_GROUPS`` - therefore being unreachable anyway
-                if not chats_wildcard and group_id not in self.group_chat_allow_from:
-                    logger.warning(
-                        "Signal: per-group config for %r but group is not in "
-                        "SIGNAL_ALLOWED_GROUPS — this entry will never apply.",
-                        group_id or "?",
-                    )
 
     def expand_user_aliases(self, identifier: Optional[str]) -> Set[str]:
         """Return all known representations of a Signal identifier.

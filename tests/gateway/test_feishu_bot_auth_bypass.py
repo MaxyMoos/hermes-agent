@@ -28,10 +28,23 @@ def _isolate_feishu_env(monkeypatch):
 
 
 def _make_bare_runner():
+    """Build a GatewayRunner skeleton with a FeishuAdapter wired for auth.
+
+    The runner's authorization gate delegates to the platform adapter's
+    ``is_user_authorized`` (#24842), so we attach a real FeishuAdapter
+    instance — ``object.__new__`` skips heavy init; the default
+    ``BasePlatformAdapter`` flow only needs the class-level AUTHZ_*_ENV
+    constants and the bot-bypass logic in ``_env_allowlist_authorize``.
+    Mirrors the pattern used in ``test_discord_bot_auth_bypass.py``.
+    """
     from gateway.run import GatewayRunner
+    from gateway.platforms.feishu import FeishuAdapter
 
     runner = object.__new__(GatewayRunner)
     runner.pairing_store = SimpleNamespace(is_approved=lambda *_a, **_kw: False)
+    feishu_adapter = object.__new__(FeishuAdapter)
+    feishu_adapter.platform = Platform.FEISHU
+    runner.adapters = {Platform.FEISHU: feishu_adapter}
     return runner
 
 

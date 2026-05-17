@@ -1894,7 +1894,7 @@ class BasePlatformAdapter(ABC):
         platform_allowlist = os.getenv(self.AUTHZ_ALLOWED_USERS_ENV or "", "").strip()
         group_user_allowlist = ""
         group_chat_allowlist = ""
-        if source.chat_type in {"group", "forum"}:
+        if source.chat_type in {"group", "forum", "channel"}:
             group_user_allowlist = os.getenv(self.AUTHZ_GROUP_ALLOWED_USERS_ENV or "", "").strip()
             group_chat_allowlist = os.getenv(self.AUTHZ_GROUP_ALLOWED_CHATS_ENV or "", "").strip()
         global_allowlist = os.getenv("GATEWAY_ALLOWED_USERS", "").strip()
@@ -1902,7 +1902,7 @@ class BasePlatformAdapter(ABC):
         if not platform_allowlist and not group_user_allowlist and not group_chat_allowlist and not global_allowlist:
             return os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in {"true", "1", "yes"}
 
-        if group_chat_allowlist and source.chat_type in {"group", "forum"}:
+        if group_chat_allowlist and source.chat_type in {"group", "forum", "channel"}:
             allowed_groups = {
                 cid.strip() for cid in group_chat_allowlist.split(",") if cid.strip()
             }

@@ -240,6 +240,8 @@ _HERMES_BEHAVIORAL_VARS = frozenset({
     "SIGNAL_ALLOWED_USERS",
     "SIGNAL_ALLOWED_GROUPS",
     "SIGNAL_ALLOWED_GROUP_USERS",
+    "SIGNAL_ACCOUNT",
+    "SIGNAL_HTTP_URL",
     # Legacy alias (deprecated, still recognized for backward compatibility)
     "SIGNAL_GROUP_ALLOWED_USERS",
     "EMAIL_ALLOWED_USERS",

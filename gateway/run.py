@@ -6442,13 +6442,17 @@ class GatewayRunner:
         The runner owns only cross-platform plumbing:
         1. Transport-authenticated platforms bypass via ``AUTHZ_BYPASS``
            (HomeAssistant, Webhook).
-        2. Reject sources without a ``user_id``.
-        3. Pairing-store approval — cross-platform, owned by runner.
-        4. Delegate the actual decision to the platform adapter's
-           :meth:`BasePlatformAdapter.is_user_authorized`.
-        5. If no adapter is loaded for ``source.platform`` (defensive
-           fallback for early-init or plugin-missing cases), apply
-           only the global ``GATEWAY_ALLOWED_USERS`` /
+        2. Pairing-store approval — cross-platform, owned by runner.
+        3. Delegate the actual authorization decision to the platform
+           adapter's :meth:`BasePlatformAdapter.is_user_authorized`.
+           This includes group/channel chat-ID allowlists, per-platform
+           allow-all flags, and the ``user_id``-is-None case (anonymous
+           admin posts, sender_chat, channel broadcasts) — the adapter
+           controls the full decision.
+        4. If no adapter is loaded for ``source.platform`` (defensive
+           fallback for early-init or plugin-missing cases), consult
+           plugin-declared auth env vars via the platform registry,
+           then fall through to the global ``GATEWAY_ALLOWED_USERS`` /
            ``GATEWAY_ALLOW_ALL_USERS`` envs.
         """
         adapters = getattr(self, "adapters", None) or {}
@@ -6492,10 +6496,8 @@ class GatewayRunner:
 
         if not user_id:
             return False
-
-        # Check pairing store (always checked, regardless of allowlists)
         platform_name = source.platform.value if source.platform else ""
-        if self.pairing_store.is_approved(platform_name, source.user_id):
+        if source.user_id and self.pairing_store.is_approved(platform_name, source.user_id):
             return True
 
         # Delegate to the adapter when it implements the hook.  A small
@@ -6515,14 +6517,60 @@ class GatewayRunner:
         """Authorize ``source`` against the global gateway-wide allowlist.
 
         Used when no adapter is loaded for the platform (degenerate
-        fallback). Reads ``GATEWAY_ALLOWED_USERS`` / ``GATEWAY_ALLOW_ALL_USERS``;
-        no per-platform env vars are consulted because the runner does
-        not know them — that knowledge lives on the adapter.
+        fallback).  Consults the platform registry so plugin-declared
+        auth env vars (``allowed_users_env`` / ``allow_all_env`` on the
+        :class:`PlatformEntry`) are still respected even without a
+        live adapter instance.  Falls through to ``GATEWAY_ALLOWED_USERS`` /
+        ``GATEWAY_ALLOW_ALL_USERS`` when no registry entry exists.
         """
+        # Check plugin-registered auth env vars when no adapter is
+        # present.  Each plugin declares allowed_users_env /
+        # allow_all_env on its PlatformEntry; consult those directly
+        # so plugin platforms are not silently denied by the
+        # adapterless fallback path (#24842 regression).
+        platform_name = source.platform.value if source.platform else ""
+        if platform_name:
+            try:
+                from gateway.platform_registry import platform_registry
+                entry = platform_registry.get(platform_name)
+            except Exception:
+                entry = None
+            if entry is not None:
+                # Per-platform allow-all flag (e.g.
+                # GOOGLE_CHAT_ALLOW_ALL_USERS=true).
+                if entry.allow_all_env and os.getenv(
+                    entry.allow_all_env, ""
+                ).lower() in {"true", "1", "yes"}:
+                    return True
+                # Platform-specific allowlist (e.g.
+                # GOOGLE_CHAT_ALLOWED_USERS=alice@example.com).
+                if entry.allowed_users_env and source.user_id:
+                    platform_allowlist = os.getenv(
+                        entry.allowed_users_env, ""
+                    ).strip()
+                    if platform_allowlist:
+                        allowed_ids = {
+                            uid.strip()
+                            for uid in platform_allowlist.split(",")
+                            if uid.strip()
+                        }
+                        if "*" in allowed_ids or source.user_id in allowed_ids:
+                            return True
+                        # Also try user_id_alt (e.g. Google Chat
+                        # ``users/{id}`` resource name).
+                        user_id_alt = getattr(source, "user_id_alt", None)
+                        if user_id_alt and user_id_alt in allowed_ids:
+                            return True
+
+        # Global gateway-wide fallback.
         global_allowlist = os.getenv("GATEWAY_ALLOWED_USERS", "").strip()
         if not global_allowlist:
-            return os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in {"true", "1", "yes"}
-        allowed_ids = {uid.strip() for uid in global_allowlist.split(",") if uid.strip()}
+            return os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in {
+                "true", "1", "yes"
+            }
+        allowed_ids = {
+            uid.strip() for uid in global_allowlist.split(",") if uid.strip()
+        }
         if "*" in allowed_ids:
             return True
         return source.user_id in allowed_ids
